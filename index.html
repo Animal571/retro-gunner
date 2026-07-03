@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Square Shooter - 100 Niveaux</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            background: #111; 
+            overflow: hidden; 
+            font-family: 'Courier New', Courier, monospace; 
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        canvas { 
+            display: block; 
+            background: #1a1a1a; 
+            margin: 0 auto;
+            box-shadow: 0 0 20px rgba(0,0,0,0.8);
+        }
+    </style>
+</head>
+<body>
+
+<canvas id="gameCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+
+// Résolution fixe (Format paysage type mobile / console portable)
+canvas.width = 960;
+canvas.height = 544;
+
+// ==========================================
+// 🛠️ ÉTAT DU JEU & PROGRESSION
+// ==========================================
+let jeu = {
+    niveauActuel: 1,
+    maxNiveaux: 100,
+    score: 0,
+    vagueActive: false,
+    ennemisEliminesCetteVague: 0,
+    ennemisRequisPourPasser: 5 // Augmente à chaque niveau
+};
+
+// ==========================================
+// 🟦 ENTITÉS (Joueur, Balles, Ennemis)
+// ==========================================
+let joueur = {
+    x: canvas.width / 2,
+    y: canvas.height / 2,
+    taille: 32,
+    vitesse: 6,
+    cibleX: canvas.width / 2,
+    cibleY: canvas.height / 2,
+    enMouvement: false
+};
+
+let balles = [];
+let ennemis = [];
+
+// Stats des ennemis selon le niveau
+let configEnnemis = {
+    vitesseBase: 1.5,
+    taille: 24,
+    frequenceApparition: 1500 // en millisecondes
+};
+
+// ==========================================
+// 🕹️ LOGIQUE DU JEU (Boucle principale)
+// ==========================================
+function update() {
+    // 1. Déplacement fluide du joueur vers son point cible (Côté gauche de l'écran)
+    if (joueur.enMouvement) {
+        let dx = joueur.cibleX - joueur.x;
+        let dy = joueur.cibleY - joueur.y;
+        let distance = Math.sqrt(dx * dx + dy * dy);
+
+        if (distance > joueur.vitesse) {
+            joueur.x += (dx / distance) * joueur.vitesse;
+            joueur.y += (dy / distance) * joueur.vitesse;
+        } else {
+            joueur.x = joueur.cibleX;
+            joueur.y = joueur.cibleY;
+            joueur.enMouvement = false;
+        }
+    }
+
+    // Limites de l'écran pour le joueur
+    joueur.x = Math.max(joueur.taille/2, Math.min(canvas.width - joueur.taille/2, joueur.x));
+    joueur.y = Math.max(joueur.taille/2, Math.min(canvas.height - joueur.taille/2, joueur.y));
+
+    // 2. Mise à jour des balles
+    for (let i = balles.length - 1; i >= 0; i--) {
+        let b = balles[i];
+        b.x += b.vx;
+        b.y += b.vy;
+        // Supprime la balle si elle sort de l'écran
+        if (b.x < 0 || b.x > canvas.width || b.y < 0 || b.y > canvas.height) {
+            balles.splice(i, 1);
+        }
+    }
+
+    // 3. Mise à jour des ennemis (Traquent le joueur)
+    for (let i = ennemis.length - 1; i >= 0; i--) {
+        let e = ennemis[i];
+        let dx = joueur.x - e.x;
+        let dy = joueur.y - e.y;
+        let dist = Math.sqrt(dx * dx + dy * dy);
+
+        // Déplacement vers le joueur
+        if (dist > 0) {
+            e.x += (dx / dist) * e.vitesse;
+            e.y += (dy / dist) * e.vitesse;
+        }
+
+        // COLLISION ENNEMI / JOUEUR (Game Over temporaire : reset niveau)
+        if (dist < (joueur.taille / 2 + e.taille / 2)) {
+            resetNiveau();
+            break;
+        }
+
+        // COLLISION BALLE / ENNEMI
+        for (let j = balles.length - 1; j >= 0; j--) {
+            let b = balles[j];
+            let bDx = b.x - e.x;
+            let bDy = b.y - e.y;
+            let bDist = Math.sqrt(bDx * bDx + bDy * bDy);
+
+            if (bDist < (e.taille / 2 + 5)) { // 5 = rayon de la balle
+                ennemis.splice(i, 1);
+                balles.splice(j, 1);
+                jeu.score += 10;
+                jeu.ennemisEliminesCetteVague++;
+                
+                // Vérification de passage de niveau
+                if (jeu.ennemisEliminesCetteVague >= jeu.ennemisRequisPourPasser) {
+                    passerAuNiveauSuivant();
+                }
+                break;
+            }
+        }
+    }
+
+    // 4. RENDU VISUEL (Zéro dessin, que des jolies formes de couleur)
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Dessin de la ligne de séparation des contrôles (Milieu de l'écran)
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.05)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(canvas.width / 2, 0);
+    ctx.lineTo(canvas.width / 2, canvas.height);
+    ctx.stroke();
+
+    // Dessin des balles (Ronds jaunes)
+    ctx.fillStyle = "#ffd200";
+    balles.forEach(b => {
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, 5, 0, Math.PI * 2);
+        ctx.fill();
+    });
+
+    // Dessin des ennemis (Carrés rouges)
+    ctx.fillStyle = "#ff4444";
+    ennemis.forEach(e => {
+        ctx.fillRect(e.x - e.taille/2, e.y - e.taille/2, e.taille, e.taille);
+    });
+
+    // Dessin du joueur (Carré bleu cyan)
+    ctx.fillStyle = "#00b4ff";
+    ctx.fillRect(joueur.x - joueur.taille/2, joueur.y - joueur.taille/2, joueur.taille, joueur.taille);
+
+    // INTERFACE TEXTUELLE (HUD)
+    ctx.fillStyle = "#fff";
+    ctx.font = "20px 'Courier New'";
+    ctx.fillText(`NIVEAU: ${jeu.niveauActuel}/${jeu.maxNiveaux}`, 20, 40);
+    ctx.fillText(`SCORE: ${jeu.score}`, 20, 70);
+    ctx.fillText(`KILLS: ${jeu.ennemisEliminesCetteVague}/${jeu.ennemisRequisPourPasser}`, 20, 100);
+
+    requestAnimationFrame(update);
+}
+
+// ==========================================
+// 🕹️ ENNEMIS & PROGRESSION DES NIVEAUX
+// ==========================================
+function genererEnnemi() {
+    if (!jeu.vagueActive) return;
+
+    // Apparition aléatoire sur l'un des 4 bords de l'écran
+    let x, y;
+    let bord = Math.floor(Math.random() * 4);
+    if (bord === 0) { x = Math.random() * canvas.width; y = -20; }          // Haut
+    if (bord === 1) { x = canvas.width + 20; y = Math.random() * canvas.height; } // Droite
+    if (bord === 2) { x = Math.random() * canvas.width; y = canvas.height + 20; } // Bas
+    if (bord === 3) { x = -20; y = Math.random() * canvas.height; }         // Gauche
+
+    // La vitesse augmente légèrement tous les niveaux
+    let vitesseNiveau = configEnnemis.vitesseBase + (jeu.niveauActuel * 0.1);
+
+    ennemis.push({
+        x: x,
+        y: y,
+        taille: configEnnemis.taille,
+        vitesse: vitesseNiveau
+    });
+
+    // Planifier le prochain ennemi tant que l'objectif n'est pas atteint
+    if (jeu.ennemisEliminesCetteVague + ennemis.length < jeu.ennemisRequisPourPasser) {
+        setTimeout(genererEnnemi, Math.max(400, configEnnemis.frequenceApparition - (jeu.niveauActuel * 50)));
+    }
+}
+
+function passerAuNiveauSuivant() {
+    jeu.niveauActuel++;
+    jeu.ennemisEliminesCetteVague = 0;
+    // On demande 3 ennemis de plus par niveau supplémentaire
+    jeu.ennemisRequisPourPasser = 5 + (jeu.niveauActuel * 3); 
+    ennemis = [];
+    balles = [];
+    
+    // Recentrer le joueur
+    joueur.x = canvas.width / 2;
+    joueur.y = canvas.height / 2;
+    joueur.enMouvement = false;
+
+    alert(`Bravo ! Passage au Niveau ${jeu.niveauActuel}`);
+    setTimeout(genererEnnemi, 1000);
+}
+
+function resetNiveau() {
+    alert("Touché ! On recommence le niveau.");
+    ennemis = [];
+    balles = [];
+    jeu.ennemisEliminesCetteVague = 0;
+    joueur.x = canvas.width / 2;
+    joueur.y = canvas.height / 2;
+    joueur.enMouvement = false;
+}
+
+// ==========================================
+// 📱 ENTRÉES : SOURIS ET TACTILE (SPLIT SCREEN)
+// ==========================================
+function handleAction(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    // Convertir les coordonnées physiques de la vitre en coordonnées logiques de notre jeu
+    const x = (clientX - rect.left) * (canvas.width / rect.width);
+    const y = (clientY - rect.top) * (canvas.height / rect.height);
+
+    // CÔTÉ GAUCHE DE L'ÉCRAN = SE DÉPLACER
+    if (x < canvas.width / 2) {
+        joueur.cibleX = x;
+        joueur.cibleY = y;
+        joueur.enMouvement = true;
+    } 
+    // CÔTÉ DROIT DE L'ÉCRAN = TIRER
+    else {
+        let angle = Math.atan2(y - joueur.y, x - joueur.x);
+        balles.push({
+            x: joueur.x,
+            y: joueur.y,
+            vx: Math.cos(angle) * 8, // Vitesse de la balle
+            vy: Math.sin(angle) * 8
+        });
+    }
+}
+
+// Écouteurs d'événements
+window.addEventListener("mousedown", (e) => handleAction(e.clientX, e.clientY));
+window.addEventListener("touchstart", (e) => {
+    // Évite le zoom intempestif sur mobile
+    e.preventDefault(); 
+    handleAction(e.touches[0].clientX, e.touches[0].clientY);
+}, { passive: false });
+
+// Lancement automatique du jeu
+jeu.vagueActive = true;
+genererEnnemi();
+update();
+</script>
+</body>
+</html>
